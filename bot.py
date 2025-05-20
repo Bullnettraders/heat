@@ -1,22 +1,28 @@
-import discord, asyncio, os
+import discord
+import asyncio
+import os
 from discord.ext import commands, tasks
-from heatmap import generate_heatmap
+from ticker_channels import update_ticker_channels, update_overall_trend_channel
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-TICKERS = os.getenv("STOCKS", "AAPL,MSFT,NVDA,GOOG,TSLA").split(",")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+TICKER_CHANNEL_IDS = [
+    int(os.getenv(f"TICKER_CHANNEL_{i}")) for i in range(1, 11)
+]
+OVERALL_TREND_CHANNEL = int(os.getenv("OVERALL_TREND_CHANNEL"))
 
 @bot.event
 async def on_ready():
-    print(f"Bot online: {bot.user}")
-    post_heatmap.start()
+    print(f"Bot ist online: {bot.user}")
+    update_all.start()
 
 @tasks.loop(minutes=3)
-async def post_heatmap():
-    generate_heatmap(TICKERS)
-    channel = bot.get_channel(CHANNEL_ID)
-    await channel.send(file=discord.File("heatmap.png"))
+async def update_all():
+    try:
+        await update_ticker_channels(bot, TICKER_CHANNEL_IDS)
+        await update_overall_trend_channel(bot, OVERALL_TREND_CHANNEL)
+    except Exception as e:
+        print(f"[Fehler beim Update] {type(e).__name__}: {e}")
 
 bot.run(os.getenv("DISCORD_TOKEN"))
