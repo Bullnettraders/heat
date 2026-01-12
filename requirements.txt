@@ -1,4 +1,3 @@
 discord.py
 yfinance
 pandas
-lxml  # <-- hinzufügen
