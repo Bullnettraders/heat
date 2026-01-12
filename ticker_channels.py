@@ -1,42 +1,46 @@
-import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
+import yfinance as yf
 
-def generate_top10_heatmap():
-    changes_dict = get_price_changes()
-    if not changes_dict:
-        return None
+# Deine TOP 10
+TICKERS = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "AVGO", "COST"]
 
-    # Wir nehmen nur die Ticker, die wir auch erfolgreich abgerufen haben
-    # Und füllen ggf. auf 10 auf, falls ein Ticker fehlt
-    labels_list = list(changes_dict.keys())
-    values_list = list(changes_dict.values())
-
-    # Sicherstellen, dass wir genau 10 Elemente für eine 2x5 Matrix haben
-    while len(values_list) < 10:
-        values_list.append(0.0)
-        labels_list.append("N/A")
-
-    # Umwandeln in 2x5 Raster
-    data_matrix = np.array(values_list).reshape(2, 5)
+def get_price_changes_fast():
+    # Wir laden alle 10 Ticker gleichzeitig (Bulk)
+    # period="1d" reicht aus, um die Tagesänderung zu bekommen
+    data = yf.download(TICKERS, period="1d", interval="1m", group_by='ticker', progress=False)
     
-    # Text für die Kacheln (Ticker + Wert)
-    annot_matrix = np.array([f"{t}\n{v}%" for t, v in zip(labels_list, values_list)]).reshape(2, 5)
+    changes = {}
+    for ticker in TICKERS:
+        try:
+            # Wir holen den letzten und den vorletzten Schlusskurs für die Berechnung
+            ticker_data = data[ticker]
+            current_price = ticker_data['Close'].iloc[-1]
+            prev_close = ticker_data['Close'].iloc[0]
+            
+            # Prozentuale Änderung berechnen
+            change_pct = ((current_price - prev_close) / prev_close) * 100
+            changes[ticker] = round(change_pct, 2)
+        except:
+            continue
+    return changes
 
-    # Styling
-    plt.figure(figsize=(12, 5))
-    sns.heatmap(data_matrix, 
-                annot=annot_matrix, 
-                fmt="", 
-                cmap="RdYlGn", 
-                center=0, 
-                linewidths=2,
-                cbar_kws={'label': 'Änderung in %'})
-    
-    plt.title("Top 10 Tech Heatmap", fontsize=16)
-    plt.axis('off')
-    
-    file_path = "top10_heatmap.png"
-    plt.savefig(file_path, bbox_inches='tight', facecolor='#2c2f33') # Discord-Grau als Hintergrund
-    plt.close()
-    return file_path
+def format_ticker(ticker, change):
+    if change > 0.3:
+        symbol = "🟢"
+    elif change < -0.3:
+        symbol = "🔴"
+    else:
+        symbol = "🟡"
+    return f"{symbol} {ticker} {change:+.2f}%"
+
+async def update_ticker_channels(bot, channel_ids):
+    # Hier nutzen wir jetzt die schnelle Abfrage
+    changes = get_price_changes_fast()
+    for i, ticker in enumerate(TICKERS):
+        if i >= len(channel_ids):
+            break
+        channel = bot.get_channel(channel_ids[i])
+        if channel and ticker in changes:
+            name = format_ticker(ticker, changes[ticker])
+            # Verhindert unnötige API-Calls, wenn der Name schon gleich ist
+            if channel.name != name:
+                await channel.edit(name=name)
