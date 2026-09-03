@@ -1,27 +1,49 @@
 import yfinance as yf
 import pandas as pd
+from datetime import datetime
+
+# ═══ BULLNET_SPEICHER ═══
+# Die Wikipedia-Liste wurde alle drei Minuten neu geladen und geparst --
+# 480 Abrufe am Tag fuer eine Liste, die sich ein paarmal im Jahr aendert.
+# Dazu blieben die pandas-Tabellen im Speicher liegen.
+_liste = None
+_liste_stand = None
+_trend_wert = None
+_trend_stand = None
 
 TICKERS = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "TSLA", "AVGO", "COST"]
 
 def get_price_changes_fast(ticker_list):
-    # Wir laden die Daten für 5 Tage, um sicherzugehen, dass wir den letzten Schlusskurs haben
-    # (Wichtig für Wochenenden oder Feiertage)
-    data = yf.download(ticker_list, period="5d", interval="1d", progress=False)
-    
+    # Zwei Tage reichen fuer den Vergleich zum Vortag.
+    data = yf.download(ticker_list, period="2d", interval="1d", progress=False)
+
     changes = {}
     for ticker in ticker_list:
         try:
-            # .iloc[-1] ist der heutige (aktuelle) Kurs
-            # .iloc[-2] ist der Schlusskurs vom letzten Handelstag (Gestern/Freitag)
             current_price = data['Close'][ticker].iloc[-1]
             prev_close = data['Close'][ticker].iloc[-2]
-            
-            # Die echte tägliche Änderung berechnen
             change_pct = ((current_price - prev_close) / prev_close) * 100
             changes[ticker] = round(change_pct, 2)
         except Exception as e:
             continue
+    del data
     return changes
+
+
+def _nasdaq100_liste():
+    # Einmal am Tag genuegt.
+    global _liste, _liste_stand
+    jetzt = datetime.now()
+    if _liste and _liste_stand and (jetzt - _liste_stand).total_seconds() < 86400:
+        return _liste
+    try:
+        tables = pd.read_html("https://en.wikipedia.org/wiki/NASDAQ-100")
+        _liste = [t.replace(".", "-") for t in tables[4]['Ticker'].tolist()[:100]]
+        _liste_stand = jetzt
+        del tables
+    except Exception as e:
+        print(f"NASDAQ-100 Liste: {e}")
+    return _liste or []
 
 def format_ticker(ticker, change):
     # Schwellenwert: 0.3% für eine klare Farbtrennung
@@ -41,17 +63,21 @@ async def update_ticker_channels(bot, channel_ids):
                 await channel.edit(name=new_name)
 
 async def update_overall_trend_channel(bot, channel_id):
-    # NASDAQ-100 Liste holen
-    url = "https://en.wikipedia.org/wiki/NASDAQ-100"
-    tables = pd.read_html(url)
-    all_tickers = tables[4]['Ticker'].tolist()[:100]
-    all_tickers = [t.replace(".", "-") for t in all_tickers]
-    
-    # Trend basierend auf dem Vergleich zum Vortag
-    changes = get_price_changes_fast(all_tickers)
-    if not changes: return
-    
-    avg = sum(changes.values()) / len(changes)
+    # Nur alle 30 Minuten wirklich rechnen -- fuer eine Kanalueberschrift
+    # reicht das voellig, statt alle drei Minuten 100 Aktien zu laden.
+    global _trend_wert, _trend_stand
+    jetzt = datetime.now()
+    if _trend_stand and (jetzt - _trend_stand).total_seconds() < 1800:
+        avg = _trend_wert
+        if avg is None: return
+    else:
+        all_tickers = _nasdaq100_liste()
+        if not all_tickers: return
+        changes = get_price_changes_fast(all_tickers)
+        if not changes: return
+        avg = sum(changes.values()) / len(changes)
+        _trend_wert = avg
+        _trend_stand = jetzt
     
     # Dynamische Symbole für den Trend
     if avg > 0.3: symbol = "🟢"
